@@ -13,6 +13,12 @@ using UnityEngine.SocialPlatforms;
 [RequireComponent(typeof(MeshCollider))]
 public class DeformableBody : MonoBehaviour
 {
+    public enum ContactSolveMode
+    {
+        LegacyVelocityInjection = 0,
+        XPBDSkeleton = 1
+    }
+
     public float Mass = 1;                  //affect the magnitude of disturbance caused by impacts
     [Range(0.0f,1.0f)] 
     public float Alpha = 0.01f;             //affect the deformation velocity of each vertex
@@ -50,6 +56,16 @@ public class DeformableBody : MonoBehaviour
     public float pressKp = 60f;                 // 穿透 -> 推回速度
     public float pressKd = 10f;                 // 法向阻尼
     public float contactRadius = 1.2f;         // 接觸影響半徑(世界)
+    [Range(1f, 6f)] public float contactFalloffPower = 2f;
+    public float contactDecaySpeed = 3f;
+    public float minPenetration = 0.0002f;
+    [Header("接觸求解模式")]
+    public ContactSolveMode contactSolveMode = ContactSolveMode.LegacyVelocityInjection;
+    [Header("XPBD (Skeleton)")]
+    [Min(1)] public int xpbdSubsteps = 2;
+    [Min(1)] public int xpbdIterations = 3;
+    [Range(0f, 1f)] public float xpbdCompliance = 0.0005f;
+    public float xpbdMaxForce = 20f;
     [Header("穩定控制")]
     public float maxDvPerStep = 0.2f;          // 每頂點每幀最大速度增量
     public float maxTotalDvPerFrame = 4.0f;     // 每幀總注入上限（防爆）
@@ -134,6 +150,8 @@ public class DeformableBody : MonoBehaviour
     //The entire algorithm is executed in FixedUpdate()
     void FixedUpdate()
     {
+        ApplyExternalToolContact();
+
         bool needsVelocityUpdate = false;
         for (int i = 0; i < added_velocity_array.Length; i++)
         {
@@ -195,9 +213,13 @@ public class DeformableBody : MonoBehaviour
         currentHapticForceY = hapticForceFiltered;
         pendingHapticForce *= 0.9;
         if (pendingHapticForce < 1e-6) pendingHapticForce = 0.0;
+        if (tool != null)
+        {
+            tool.SetReactionForce(new Vector3(0f, (float)currentHapticForceY, 0f));
+        }
         //The following commented code is for debuging.
         //Debuger.VectorArrayCheck(CurrentPosition);
-        
+
         /*
         if (velocity_array != null)
         {
@@ -214,7 +236,177 @@ public class DeformableBody : MonoBehaviour
         */
         //Debuger.VectorArrayCheck(currentCenterPos);
     }
-       
+
+    void ApplyExternalToolContact()
+    {
+        if (contactSolveMode == ContactSolveMode.XPBDSkeleton)
+        {
+            ApplyExternalToolContactXPBDSkeleton();
+            return;
+        }
+        ApplyExternalToolContactLegacy();
+    }
+
+    void ApplyExternalToolContactLegacy()
+    {
+        if (CurrentPosition == null || added_velocity_array == null) return;
+        if (externalRadius <= 0f) return;
+
+        VelocityBuffer.GetData(velocity_array);
+
+        float influenceR = Mathf.Max(contactRadius, externalRadius * 1.25f);
+        float totalW = 0f;
+        float[] wCache = new float[mergedVertices_num];
+        Vector3[] nCache = new Vector3[mergedVertices_num];
+        float[] penCache = new float[mergedVertices_num];
+
+        int candidateCount = 0;
+
+        for (int v = 0; v < mergedVertices_num; v++)
+        {
+            Vector<double> p = CurrentPosition[v];
+            Vector3 qWorld = transform.TransformPoint(new Vector3((float)p[0], (float)p[1], (float)p[2]));
+            Vector3 dir = qWorld - externalPos;
+            float d = dir.magnitude;
+            if (d < 1e-6f) continue;
+
+            float penetration = externalRadius - d;
+            if (penetration <= minPenetration) continue;
+
+            float shellDist = Mathf.Abs(d - externalRadius);
+            float bestW = 1f - Mathf.Clamp01(shellDist / Mathf.Max(1e-4f, influenceR));
+            if (bestW <= 0f) continue;
+
+            wCache[v] = bestW;
+            nCache[v] = -dir / d;
+            penCache[v] = penetration;
+            totalW += bestW;
+            candidateCount++;
+        }
+
+        if (totalW <= 1e-6f) return;
+
+        float remainBudget = maxTotalDvPerFrame;
+
+        for (int v = 0; v < mergedVertices_num; v++)
+        {
+            float w = wCache[v];
+            if (w <= 0f) continue;
+
+            Vector3 nPush = nCache[v];
+            float pen = penCache[v];
+
+            Vector3 vLocal = new Vector3(
+                (float)velocity_array[3 * v + 0],
+                (float)velocity_array[3 * v + 1],
+                (float)velocity_array[3 * v + 2]
+            );
+            Vector3 vWorld = transform.TransformDirection(vLocal);
+
+            float vn = Vector3.Dot(vWorld - externalVelocity, nPush);
+            float shapedW = Mathf.Pow(w, Mathf.Max(1f, contactFalloffPower));
+            float dv = (pressKp * pen - pressKd * vn) * shapedW * Time.fixedDeltaTime;
+            dv = Mathf.Clamp(dv, 0f, maxDvPerStep);
+
+            float share = w / totalW;
+            float dvBudget = remainBudget * share;
+            dv = Mathf.Min(dv, dvBudget);
+            if (dv <= 0f) continue;
+
+            Vector3 vAddWorld = nPush * dv;
+            Vector3 vAddLocal = transform.InverseTransformDirection(vAddWorld);
+            added_velocity_array[3 * v + 0] += vAddLocal.x;
+            added_velocity_array[3 * v + 1] += vAddLocal.y;
+            added_velocity_array[3 * v + 2] += vAddLocal.z;
+
+            if (shapedW > contact_weights[v]) contact_weights[v] = shapedW;
+
+            double h = (pressKp * pen + Math.Max(0f, -vn) * pressKd) * shapedW * 8.0;
+            pendingHapticForce += h;
+
+            remainBudget -= dv;
+            if (remainBudget <= 1e-6f) break;
+        }
+
+        Debug.Log($"[EXT_CONTACT] candidates={candidateCount}, totalW={totalW:F5}, radius={externalRadius:F4}");
+    }
+
+    void ApplyExternalToolContactXPBDSkeleton()
+    {
+        if (CurrentPosition == null || added_velocity_array == null) return;
+        if (externalRadius <= 0f) return;
+
+        float dt = Time.fixedDeltaTime;
+        if (dt <= 1e-6f) return;
+
+        int substeps = Mathf.Max(1, xpbdSubsteps);
+        int iterations = Mathf.Max(1, xpbdIterations);
+        float subDt = dt / substeps;
+        float alpha = Mathf.Max(0f, xpbdCompliance) / (subDt * subDt); // XPBD α~
+
+        double sumAbsLambda = 0.0;
+        int activeConstraints = 0;
+
+        for (int s = 0; s < substeps; s++)
+        {
+            float[] lambda = new float[mergedVertices_num];
+
+            for (int it = 0; it < iterations; it++)
+            {
+                for (int v = 0; v < mergedVertices_num; v++)
+                {
+                    Vector<double> p = CurrentPosition[v];
+                    Vector3 qWorld = transform.TransformPoint(new Vector3((float)p[0], (float)p[1], (float)p[2]));
+
+                    Vector3 dir = qWorld - externalPos;
+                    float d = dir.magnitude;
+                    if (d < 1e-6f) continue;
+
+                    float penetration = externalRadius - d;
+                    if (penetration <= minPenetration) continue;
+
+                    float w = 1f - Mathf.Clamp01(Mathf.Abs(d - externalRadius) / Mathf.Max(1e-4f, contactRadius));
+                    if (w <= 0f) continue;
+
+                    float invMass = (float)(1.0 / Math.Max(1e-8, mass[v]));
+                    invMass *= Mathf.Max(0.05f, w); // 權重衰減
+
+                    float C = penetration; // C>0 代表穿透
+                    float deltaLambda = (-C - alpha * lambda[v]) / (invMass + alpha);
+                    lambda[v] += deltaLambda;
+
+                    Vector3 nOut = dir / d; // 往球外方向修正
+                    Vector3 dxWorld = -invMass * deltaLambda * nOut;
+                    Vector3 dxLocal = transform.InverseTransformDirection(dxWorld);
+
+                    Vector3 vAdd = dxLocal / Mathf.Max(1e-6f, subDt);
+                    float vAddMag = vAdd.magnitude;
+                    if (vAddMag > maxDvPerStep)
+                    {
+                        vAdd *= maxDvPerStep / Mathf.Max(1e-6f, vAddMag);
+                    }
+
+                    added_velocity_array[3 * v + 0] += vAdd.x;
+                    added_velocity_array[3 * v + 1] += vAdd.y;
+                    added_velocity_array[3 * v + 2] += vAdd.z;
+
+                    if (w > contact_weights[v]) contact_weights[v] = w;
+                    sumAbsLambda += Math.Abs(deltaLambda);
+                    activeConstraints++;
+                }
+            }
+        }
+
+        // skeleton force readout: F ~= Σ|Δλ| / dt²
+        double forceEst = (dt > 1e-6f) ? (sumAbsLambda / (dt * dt)) : 0.0;
+        pendingHapticForce += Math.Min(forceEst, xpbdMaxForce);
+
+        if (activeConstraints > 0)
+        {
+            Debug.Log($"[XPBD_CONTACT] active={activeConstraints}, force={forceEst:F4}, sub={substeps}, it={iterations}");
+        }
+    }
+
     // Update is called once per frame
     // Update() is only used to update the mesh vertices computed by the algorithm in FixedUpdate()
     void Update(){
