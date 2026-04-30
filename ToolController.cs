@@ -23,6 +23,11 @@ public class ToolController : MonoBehaviour
     private Vector3 lastLogicPosition;
     public float commandFollow = 18f;
 
+    public SphereCollider toolCollider;   // 指到自己的 SphereCollider
+    public Collider tissueCollider;       // 指到組織的 MeshCollider
+    public int projectionIterations = 3;  // 多次投影更穩
+    public float projectionSlop = 0.0005f;
+
     void Start()
     {
         logicPosition = transform.position;
@@ -43,6 +48,8 @@ public class ToolController : MonoBehaviour
         float dt = Mathf.Max(1e-6f, Time.deltaTime);
         logicVelocity = (logicPosition - lastLogicPosition) / dt;
         lastLogicPosition = logicPosition;
+
+        ResolvePenetrationProjection();
 
         // 回寫修正後位置與速度
         SendToDeformable();
@@ -79,6 +86,33 @@ public class ToolController : MonoBehaviour
 
         logicPosition += backdriveVelocity * Time.deltaTime;
         transform.position = logicPosition;
+    }
+
+    void ResolvePenetrationProjection()
+    {
+        if (toolCollider == null || tissueCollider == null) return;
+
+        // 多迭代幾次，避免一次推不乾淨
+        for (int it = 0; it < projectionIterations; it++)
+        {
+            Vector3 dir;
+            float dist;
+
+            bool overlapped = Physics.ComputePenetration(
+                toolCollider, toolCollider.transform.position, toolCollider.transform.rotation,
+                tissueCollider, tissueCollider.transform.position, tissueCollider.transform.rotation,
+                out dir, out dist
+            );
+
+            if (!overlapped) break;
+
+            // 把工具往外推出去（dir 是“把 tool 推離 tissue”的方向）
+            Vector3 correction = dir * (dist + projectionSlop);
+
+            logicPosition += correction;
+            commandedPosition += correction; // 很重要：不然下一幀 commanded 又把你拉回穿透
+            transform.position = logicPosition;
+        }
     }
 
     void SendToDeformable()
