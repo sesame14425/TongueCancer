@@ -48,6 +48,8 @@ public class DeformableBody : MonoBehaviour
     public double currentHapticForceY = 0.0;
     [Range(0f, 1f)] public float hapticSmoothing = 0.15f;
     private double hapticForceFiltered = 0.0;
+    private Vector3 reactionForceFiltered = Vector3.zero;
+    private Vector3 pendingReactionForce = Vector3.zero;
     public double hapticDeadzoneEnter = 0.03; // 進入門檻
     public double hapticDeadzoneExit = 0.015; // 退出門檻（遲滯）
     private bool hapticActive = false;
@@ -211,11 +213,16 @@ public class DeformableBody : MonoBehaviour
         // haptic 輸出
         hapticForceFiltered = Mathf.Lerp((float)hapticForceFiltered, (float)pendingHapticForce, hapticSmoothing);
         currentHapticForceY = hapticForceFiltered;
-        pendingHapticForce *= 0.9;
+        
+        reactionForceFiltered = Vector3.Lerp(reactionForceFiltered, pendingReactionForce, hapticSmoothing);
+
+        pendingHapticForce *= 0.75;
         if (pendingHapticForce < 1e-6) pendingHapticForce = 0.0;
+        pendingReactionForce = Vector3.Lerp(pendingReactionForce, Vector3.zero, 0.35f);
+        if (pendingReactionForce.sqrMagnitude < 1e-8f) pendingReactionForce = Vector3.zero;
         if (tool != null)
         {
-            tool.SetReactionForce(new Vector3(0f, (float)currentHapticForceY, 0f));
+            tool.SetReactionForce(reactionForceFiltered);
         }
         //The following commented code is for debuging.
         //Debuger.VectorArrayCheck(CurrentPosition);
@@ -278,7 +285,8 @@ public class DeformableBody : MonoBehaviour
             if (bestW <= 0f) continue;
 
             wCache[v] = bestW;
-            nCache[v] = -dir / d;
+            // Push vertices away from tool center to create visible indentation
+            nCache[v] = dir / d;
             penCache[v] = penetration;
             totalW += bestW;
             candidateCount++;
@@ -321,8 +329,9 @@ public class DeformableBody : MonoBehaviour
 
             if (shapedW > contact_weights[v]) contact_weights[v] = shapedW;
 
-            double h = (pressKp * pen + Math.Max(0f, -vn) * pressKd) * shapedW * 8.0;
+            double h = (pressKp * pen + Math.Max(0f, -vn) * pressKd) * shapedW * 4.0;
             pendingHapticForce += h;
+            pendingReactionForce += (-nPush) * (float)h;
 
             remainBudget -= dv;
             if (remainBudget <= 1e-6f) break;
@@ -577,7 +586,8 @@ public class DeformableBody : MonoBehaviour
             }
             if (bestW <= 0f) continue;
 
-            Vector3 nPush = -dir / d;
+            // Push vertices away from tool center to avoid inverting the surface response
+            Vector3 nPush = dir / d;
 
             wCache[v] = bestW;
             nCache[v] = nPush;
@@ -603,7 +613,7 @@ public class DeformableBody : MonoBehaviour
                 (float)velocity_array[3 * v + 2]
             );
             Vector3 vWorld = transform.TransformDirection(vLocal);
-            float vn = Vector3.Dot(vWorld, nPush);
+            float vn = Vector3.Dot(vWorld - externalVelocity, nPush);
 
             float shapedW = Mathf.Pow(w, Mathf.Max(1f, contactFalloffPower));
             float dv = (pressKp * pen - pressKd * vn) * shapedW * Time.fixedDeltaTime;
@@ -624,8 +634,9 @@ public class DeformableBody : MonoBehaviour
 
             if (shapedW > contact_weights[v]) contact_weights[v] = shapedW;
 
-            double h = (pressKp * pen + Math.Max(0f, -vn) * pressKd) * shapedW * 8.0; // haptic縮放可再調
+            double h = (pressKp * pen + Math.Max(0f, -vn) * pressKd) * shapedW * 4.0;
             pendingHapticForce += h;
+            pendingReactionForce += (-nPush) * (float)h;
             sumH += h;
 
             sumAdd += vAddWorld.magnitude;
