@@ -20,7 +20,7 @@ RWStructuredBuffer<int> ClusterIDs;     //indicate all cluster id that include e
 int PointsNum; //describe how many no repeat vertices
 int dim;
 float DeltaTime; //the time interval between each frame
-float alpha;
+StructuredBuffer<float> Alphas;
 float damp;
 float mass;
 
@@ -29,7 +29,6 @@ float mass;
 void ShapeMatching (uint GroupIndex : SV_GroupIndex, uint GroupID : SV_GroupID)
 {
     int index = 64*GroupID + GroupIndex; // vertex id
-    double threshold = 0.000000001;
 
     if(index < PointsNum){
         
@@ -37,24 +36,26 @@ void ShapeMatching (uint GroupIndex : SV_GroupIndex, uint GroupID : SV_GroupID)
         int ClusterIDs_tail = PointsHeadTail[index*2 + 1];
         int len = ClusterIDs_tail - ClusterIDs_head + 1;
         int clusterID;
-        for(int j = 0; j < len; j++){
+        
+        float currentAlpha = Alphas[index];
+        float alphaRate = currentAlpha / DeltaTime;
+        for (int j = 0; j < len; j++)
+        {
             clusterID = ClusterIDs[ClusterIDs_head + j];
-            for(int row = 0; row < 3; row ++){
-                for(int col = 0; col < dim; col ++){
-                    Velocity[index*3 + row] += (alpha/DeltaTime)*(Transform[3*dim*clusterID + dim*row + col]*(OriginalPos[index*dim + col] - Center[(dim+3)*clusterID + col]));
+            for (int row = 0; row < 3; row++)
+            {
+                for (int col = 0; col < dim; col++)
+                {
+                    Velocity[index * 3 + row] += alphaRate * (Transform[3 * dim * clusterID + dim * row + col] * (OriginalPos[index * dim + col] - Center[(dim + 3) * clusterID + col]));
                 }
-                Velocity[index*3 + row] += (alpha/DeltaTime)*(-CurrentPos[index*3 + row] + Center[(dim+3)*clusterID + dim + row]);
+                Velocity[index * 3 + row] += alphaRate * (-CurrentPos[index * 3 + row] + Center[(dim + 3) * clusterID + dim + row]);
             }
         }
 
-        for(int k = 0; k < 3; k++){
-            
-            if(Velocity[3*index + k] < threshold && Velocity[3*index + k] > -threshold){
-                Velocity[3*index + k] = 0.0;
-            }
-            
+        for(int k = 0; k < 3; k++)
+        {
             CurrentPos[index*3 + k] += Velocity[index*3 + k]*DeltaTime;
-            Velocity[3*index + k] *= (1 - damp);
+            Velocity[3*index + k] *= (1.0 - damp);
         }
     }
     

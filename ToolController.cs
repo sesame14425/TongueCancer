@@ -18,25 +18,33 @@ public class ToolController : MonoBehaviour
 
     private Vector3 logicPosition;
     private Vector3 commandedPosition;
-    private Vector3 velocity;
+    private Vector3 inputVelocity;
+    private Vector3 logicVelocity;
+    private Vector3 lastLogicPosition;
     public float commandFollow = 18f;
 
     void Start()
     {
         logicPosition = transform.position;
         commandedPosition = logicPosition;
+        lastLogicPosition = logicPosition;
+        inputVelocity = Vector3.zero;
+        logicVelocity = Vector3.zero;
     }
 
     void Update()
     {
         HandleInput();
 
-        SendToDeformable();
-
         // 讓邏輯控制點也受到反作用，避免僅視覺彈開
         ApplyLogicBackdrive();
 
-        // 回寫修正後位置
+        // 以實際邏輯點位移計算速度，避免只用輸入速度導致接觸估算失真
+        float dt = Mathf.Max(1e-6f, Time.deltaTime);
+        logicVelocity = (logicPosition - lastLogicPosition) / dt;
+        lastLogicPosition = logicPosition;
+
+        // 回寫修正後位置與速度
         SendToDeformable();
 
         UpdateVisualProxy();
@@ -51,9 +59,9 @@ public class ToolController : MonoBehaviour
         if (Input.GetKey(KeyCode.Q)) up -= 1f;
 
         Vector3 inputDir = new Vector3(h, up, v);
-        velocity = inputDir * moveSpeed;
+        inputVelocity = inputDir * moveSpeed;
 
-        commandedPosition += velocity * Time.deltaTime;
+        commandedPosition += inputVelocity * Time.deltaTime;
 
         float followT = 1f - Mathf.Exp(-commandFollow * Time.deltaTime);
         logicPosition = Vector3.Lerp(logicPosition, commandedPosition, followT);
@@ -79,7 +87,7 @@ public class ToolController : MonoBehaviour
 
         deformable.externalPos = logicPosition;
         deformable.externalRadius = radius;
-        deformable.externalVelocity = velocity;
+        deformable.externalVelocity = logicVelocity;
     }
 
     void UpdateVisualProxy()

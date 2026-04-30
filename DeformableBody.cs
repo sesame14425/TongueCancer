@@ -73,6 +73,9 @@ public class DeformableBody : MonoBehaviour
     public float maxTotalDvPerFrame = 4.0f;     // 每幀總注入上限（防爆）
     public float globalVelocityDamping = 0.992f;// 全域速度阻尼
     public float velocityClamp = 2.5f;          // 每分量夾制
+    [Header("接觸位置修正")]
+    public bool enablePositionProjection = true;
+    public float maxPositionCorrectionPerStep = 0.008f;
 
     public int colliderRefreshInterval = 4;     // MeshCollider 更新間隔幀數
     private int colliderRefreshCounter = 0;
@@ -323,6 +326,8 @@ public class DeformableBody : MonoBehaviour
 
             Vector3 vAddWorld = nPush * dv;
             Vector3 vAddLocal = transform.InverseTransformDirection(vAddWorld);
+            float projMag = Mathf.Min(maxPositionCorrectionPerStep, pen * 0.6f) * shapedW;
+            ApplyPositionCorrection(v, nPush * projMag);
             added_velocity_array[3 * v + 0] += vAddLocal.x;
             added_velocity_array[3 * v + 1] += vAddLocal.y;
             added_velocity_array[3 * v + 2] += vAddLocal.z;
@@ -338,6 +343,17 @@ public class DeformableBody : MonoBehaviour
         }
 
         Debug.Log($"[EXT_CONTACT] candidates={candidateCount}, totalW={totalW:F5}, radius={externalRadius:F4}");
+    }
+
+    void ApplyPositionCorrection(int v, Vector3 worldDelta)
+    {
+        if (!enablePositionProjection) return;
+        if (worldDelta.sqrMagnitude <= 1e-12f) return;
+
+        Vector3 localDelta = transform.InverseTransformDirection(worldDelta);
+        CurrentPosition[v][0] += localDelta.x;
+        CurrentPosition[v][1] += localDelta.y;
+        CurrentPosition[v][2] += localDelta.z;
     }
 
     void ApplyExternalToolContactXPBDSkeleton()
@@ -387,6 +403,7 @@ public class DeformableBody : MonoBehaviour
                     Vector3 nOut = dir / d; // 往球外方向修正
                     Vector3 dxWorld = -invMass * deltaLambda * nOut;
                     Vector3 dxLocal = transform.InverseTransformDirection(dxWorld);
+                    ApplyPositionCorrection(v, dxWorld);
 
                     Vector3 vAdd = dxLocal / Mathf.Max(1e-6f, subDt);
                     float vAddMag = vAdd.magnitude;
@@ -627,6 +644,8 @@ public class DeformableBody : MonoBehaviour
 
             Vector3 vAddWorld = nPush * dv;
             Vector3 vAddLocal = transform.InverseTransformDirection(vAddWorld);
+            float projMag = Mathf.Min(maxPositionCorrectionPerStep, pen * 0.6f) * shapedW;
+            ApplyPositionCorrection(v, nPush * projMag);
 
             added_velocity_array[3 * v + 0] += vAddLocal.x;
             added_velocity_array[3 * v + 1] += vAddLocal.y;
