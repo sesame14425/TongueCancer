@@ -1,0 +1,61 @@
+// Each #kernel tells which function to compile; you can have many kernels
+#pragma kernel ShapeMatching
+
+// Create a RenderTexture with enableRandomWrite flag and set it
+// with cs.SetTexture
+
+RWStructuredBuffer<double> Transform; //11, 12, 13, 21, 22, 23, 31, 32, 33
+                                      //cluster1 cluster2 clster3 ...
+                                      //if quadratic: 11, 12, 13, 14, 15, 16, 17, 18, 19, 21, 22, 23, ...
+RWStructuredBuffer<double> CurrentPos;//P1_x, P1_y, P1_z, P2_x, P2_y, P2_z ...
+
+RWStructuredBuffer<double> OriginalPos; //P1_x, P1_y, P1_z, P2_x, P2_y, P2_z,...
+RWStructuredBuffer<double> Center; //Original_1 Current_1 Original_2 Current_2 ...
+RWStructuredBuffer<double> Velocity; //every distinqush vertices has a velocity
+
+RWStructuredBuffer<int> PointsHeadTail; //indicate the special indexs in the ClusterIDS buffer, 
+                                        //two value form a interval representating all cluster that include this vertex
+RWStructuredBuffer<int> ClusterIDs;     //indicate all cluster id that include each vertex
+
+int PointsNum; //describe how many no repeat vertices
+int dim;
+float DeltaTime; //the time interval between each frame
+float alpha;
+float damp;
+float mass;
+
+//This kernel is used to calculate the numerical integration
+[numthreads(32,2,1)]
+void ShapeMatching (uint GroupIndex : SV_GroupIndex, uint GroupID : SV_GroupID)
+{
+    int index = 64*GroupID + GroupIndex; // vertex id
+    double threshold = 0.000000001;
+
+    if(index < PointsNum){
+        
+        int ClusterIDs_head = PointsHeadTail[index*2];
+        int ClusterIDs_tail = PointsHeadTail[index*2 + 1];
+        int len = ClusterIDs_tail - ClusterIDs_head + 1;
+        int clusterID;
+        for(int j = 0; j < len; j++){
+            clusterID = ClusterIDs[ClusterIDs_head + j];
+            for(int row = 0; row < 3; row ++){
+                for(int col = 0; col < dim; col ++){
+                    Velocity[index*3 + row] += (alpha/DeltaTime)*(Transform[3*dim*clusterID + dim*row + col]*(OriginalPos[index*dim + col] - Center[(dim+3)*clusterID + col]));
+                }
+                Velocity[index*3 + row] += (alpha/DeltaTime)*(-CurrentPos[index*3 + row] + Center[(dim+3)*clusterID + dim + row]);
+            }
+        }
+
+        for(int k = 0; k < 3; k++){
+            
+            if(Velocity[3*index + k] < threshold && Velocity[3*index + k] > -threshold){
+                Velocity[3*index + k] = 0.0;
+            }
+            
+            CurrentPos[index*3 + k] += Velocity[index*3 + k]*DeltaTime;
+            Velocity[3*index + k] *= (1 - damp);
+        }
+    }
+    
+}
