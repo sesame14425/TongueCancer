@@ -114,8 +114,8 @@ namespace TongueCancer.TissueDeformation
 
         private Vector<double>[] _originalPosition;
         internal Vector<double>[] CurrentPosition;
-        private Vector<double> _currentCenterPos;
-        private Vector<double> _lastCenterPos;
+        private Vector<double> _currentCenter;
+        private Vector<double> _lastCenter;
 
         private Matrix<double>[] _transform;
         private Vector<double>[] _originalCenterPos;
@@ -140,7 +140,7 @@ namespace TongueCancer.TissueDeformation
         public double PendingHapticForce { get; private set; }
         public Vector3 PendingReactionForce { get; private set; }
 
-        // ─────────────────────────────────────────────────────────────────────────
+        // ───────────────────────────────────────────────────────────────[...]
 
         private void Awake()
         {
@@ -152,8 +152,8 @@ namespace TongueCancer.TissueDeformation
             ApplyExternalContact();
             FlushVelocityUpdates();
 
-            _lastCenterPos = _currentCenterPos;
-            _currentCenterPos = Operation.average(CurrentPosition);
+            _lastCenter = _currentCenter;
+            _currentCenter = Operation.average(CurrentPosition);
 
             for (int i = 0; i < cluster_num; i++) TransformGen(i);
             CenterUpdate();
@@ -179,9 +179,9 @@ namespace TongueCancer.TissueDeformation
             ReleaseBuffers();
         }
 
-        // ─────────────────────────────────────────────────────────────────────────
+        // ───────────────────────────────────────────────────────────────[...]
         // 初始化 / Initialisation
-        // ─────────────────────────────────────────────────────────────────────────
+        // ───────────────────────────────────────────────────────────────[...]
 
         private void Init()
         {
@@ -200,8 +200,8 @@ namespace TongueCancer.TissueDeformation
             _originalPosition = Operation.List2Array(mergedList);
             CurrentPosition   = Operation.List2Array(mergedList);
 
-            _currentCenterPos = Operation.average(CurrentPosition);
-            _lastCenterPos    = _currentCenterPos;
+            _currentCenter = Operation.average(CurrentPosition);
+            _lastCenter    = _currentCenter;
 
             _dim = quadratic ? 9 : 3;
             if (quadratic) _padding = CreateMatrix.Dense<double>(3, 6, 0);
@@ -258,9 +258,9 @@ namespace TongueCancer.TissueDeformation
             ShaderInit();
         }
 
-        // ─────────────────────────────────────────────────────────────────────────
+        // ───────────────────────────────────────────────────────────────[...]
         // 接觸求解 / Contact solve
-        // ─────────────────────────────────────────────────────────────────────────
+        // ───────────────────────────────────────────────────────────────[...]
 
         private void ApplyExternalContact()
         {
@@ -392,9 +392,9 @@ namespace TongueCancer.TissueDeformation
             _velocityBuffer.SetData(_velocityArray);
         }
 
-        // ─────────────────────────────────────────────────────────────────────────
+        // ───────────────────────────────────────────────────────────────[...]
         // 網格更新 / Mesh update
-        // ─────────────────────────────────────────────────────────────────────────
+        // ───────────────────────────────────────────────────────────────[...]
 
         private void MeshUpdate()
         {
@@ -416,9 +416,9 @@ namespace TongueCancer.TissueDeformation
             }
         }
 
-        // ─────────────────────────────────────────────────────────────────────────
+        // ───────────────────────────────────────────────────────────────[...]
         // GPU 緩衝區初始化 / GPU buffer initialisation
-        // ─────────────────────────────────────────────────────────────────────────
+        // ───────────────────────────────────────────────────────────────[...]
 
         private void ShaderInit()
         {
@@ -489,10 +489,10 @@ namespace TongueCancer.TissueDeformation
             _alphaBuffer?.Release();          _alphaBuffer         = null;
         }
 
-        // ─────────────────────────────────────────────────────────────────────────
+        // ───────────────────────────────────────────────────────────────[...]
         // vertices_merge：去除重複頂點
         // vertices_merge: remove duplicate vertices
-        // ─────────────────────────────────────────────────────────────────────────
+        // ───────────────────────────────────────────────────────────────[...]
 
         private void VerticesMerge(Vector3[] vertices, List<Vector3> merged, int[] table)
         {
@@ -518,9 +518,9 @@ namespace TongueCancer.TissueDeformation
             }
         }
 
-        // ─────────────────────────────────────────────────────────────────────────
+        // ───────────────────────────────────────────────────────────────[...]
         // Overlapping K-Means
-        // ─────────────────────────────────────────────────────────────────────────
+        // ───────────────────────────────────────────────────────────────[...]
 
         private void OverlappingKMeans(int seedNum, float overlap, int maxIter)
         {
@@ -669,7 +669,7 @@ namespace TongueCancer.TissueDeformation
             return arr;
         }
 
-        // ─────────────────────────────────────────────────────────────────────────
+        // ───────────────────────────────────────────────────────────────[...]
         // TransformGen：每幀每 cluster 計算最佳化變形矩陣
         // TransformGen: compute per-cluster optimal deformation matrix each frame
         //
@@ -677,7 +677,7 @@ namespace TongueCancer.TissueDeformation
         // ② EVD 求平方根矩陣，分解出 Rotation / Stretching
         // ③ Transform = Beta*A + (1-Beta)*Rotation
         // ④ 調整 det 至 1（防止體積膨脹/收縮）
-        // ─────────────────────────────────────────────────────────────────────────
+        // ───────────────────────────────────────────────────────────────[...]
 
         private void TransformGen(int groupIndex)
         {
@@ -773,9 +773,9 @@ namespace TongueCancer.TissueDeformation
                 }
         }
 
-        // ─────────────────────────────────────────────────────────────────────────
+        // ───────────────────────────────────────────────────────────────[...]
         // GPU Dispatch
-        // ─────────────────────────────────────────────────────────────────────────
+        // ───────────────────────────────────────────────────────────────[...]
 
         private void TransformSet()
         {
@@ -810,9 +810,9 @@ namespace TongueCancer.TissueDeformation
             _centerBuffer.SetData(_centerArray);
         }
 
-        // ─────────────────────────────────────────────────────────────────────────
+        // ───────────────────────────────────────────────────────────────[...]
         // Public API
-        // ─────────────────────────────────────────────────────────────────────────
+        // ───────────────────────────────────────────────────────────────[...]
 
         /// <summary>
         /// 在指定世界座標位置施加力（速度衝量），由 TissueDeformationController 呼叫。
