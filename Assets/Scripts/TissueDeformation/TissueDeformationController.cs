@@ -3,101 +3,120 @@ using UnityEngine;
 namespace TongueCancer.TissueDeformation
 {
     /// <summary>
-    /// 組織變形網格控制器（Tissue Deformation Mesh Controller）：
-    /// 作為 MassSpringDeformation 與 SoftBodySimulator 的上層整合介面，
-    /// 提供統一的 API 讓手術工具呼叫。
+    /// 組織變形整合控制器（Tissue Deformation Integration Controller）：
+    /// 整合 MassSpringDeformation（GPU Shape Matching 引擎）與
+    /// SoftBodySimulator（材質屬性 + 視覺覆蓋層），提供統一的外部 API。
     ///
-    /// Top-level integration controller for MassSpringDeformation and SoftBodySimulator.
-    /// Provides a unified API for surgical tools to invoke.
+    /// Integration controller bridging MassSpringDeformation (GPU Shape Matching engine)
+    /// and SoftBodySimulator (material properties + visual overlay).
+    /// Exposes a unified API for surgical tools.
     /// </summary>
     [RequireComponent(typeof(MassSpringDeformation))]
     [RequireComponent(typeof(SoftBodySimulator))]
     public class TissueDeformationController : MonoBehaviour
     {
-        [Header("變形模式 / Deformation Mode")]
-        public DeformationMode activeMode = DeformationMode.SoftBody;
+        [Header("外部接觸工具 / External Contact Tool")]
+        [Tooltip("手術工具控制器（可為空）Surgical tool controller (can be null)")]
+        public ToolController tool;
 
         [Header("視覺回饋 / Visual Feedback")]
-        [Tooltip("變形時的材質顏色疊加 Material color overlay during deformation")]
+        [Tooltip("變形高亮顏色（接觸時）Material colour overlay during deformation")]
         public Color deformationHighlightColor = new Color(1f, 0.5f, 0.5f, 0.3f);
 
-        [Tooltip("病變組織顏色 Lesion tissue color")]
+        [Tooltip("病變組織顏色 Lesion tissue colour")]
         public Color lesionColor = new Color(0.8f, 0.2f, 0.2f, 1f);
 
-        [Tooltip("正常組織顏色 Normal tissue color")]
+        [Tooltip("正常組織顏色 Normal tissue colour")]
         public Color normalTissueColor = new Color(0.95f, 0.75f, 0.75f, 1f);
 
-        public enum DeformationMode
-        {
-            /// <summary>質量彈簧模型 Mass-spring model</summary>
-            MassSpring,
-            /// <summary>軟體模擬器 Soft body simulator</summary>
-            SoftBody,
-            /// <summary>兩者同時啟用 Both active simultaneously</summary>
-            Combined
-        }
+        [Header("力回饋平滑 / Haptic Smoothing")]
+        [Range(0f, 1f)]
+        public float hapticSmoothing = 0.15f;
 
-        private MassSpringDeformation _massSpring;
-        private SoftBodySimulator _softBody;
-        private Renderer _renderer;
+        // ── 子元件 / Sub-components ───────────────────────────────────────────────
+        private MassSpringDeformation _shapeMatching;
+        private SoftBodySimulator     _softBody;
+        private Renderer              _renderer;
         private MaterialPropertyBlock _propertyBlock;
+
+        // ── 力回饋濾波 / Haptic filtering ─────────────────────────────────────────
+        private double  _hapticForceFiltered   = 0.0;
+        private Vector3 _reactionForceFiltered = Vector3.zero;
+
+        public double  CurrentHapticForceY   => _hapticForceFiltered;
+        public Vector3 ReactionForce         => _reactionForceFiltered;
+
+        // ─────────────────────────────────────────────────────────────────────────
 
         private void Awake()
         {
-            _massSpring = GetComponent<MassSpringDeformation>();
-            _softBody = GetComponent<SoftBodySimulator>();
-            _renderer = GetComponent<Renderer>();
+            _shapeMatching = GetComponent<MassSpringDeformation>();
+            _softBody      = GetComponent<SoftBodySimulator>();
+            _renderer      = GetComponent<Renderer>();
             _propertyBlock = new MaterialPropertyBlock();
-
-            SetMode(activeMode);
         }
 
-        /// <summary>
-        /// 切換變形模式並相應地啟用/停用底層元件。
-        /// Switches the deformation mode, enabling/disabling underlying components accordingly.
-        /// </summary>
-        public void SetMode(DeformationMode mode)
+        private void FixedUpdate()
         {
-            activeMode = mode;
-            _massSpring.enabled = mode == DeformationMode.MassSpring || mode == DeformationMode.Combined;
-            _softBody.enabled = mode == DeformationMode.SoftBody || mode == DeformationMode.Combined;
+            // 過濾 Shape Matching 引擎輸出的力回饋，轉發給工具
+            // Filter haptic output from the Shape Matching engine and forward to tool
+            _hapticForceFiltered = Mathf.Lerp(
+                (float)_hapticForceFiltered,
+                (float)_shapeMatching.PendingHapticForce,
+                hapticSmoothing);
+
+            _reactionForceFiltered = Vector3.Lerp(
+                _reactionForceFiltered,
+                _shapeMatching.PendingReactionForce,
+                hapticSmoothing);
+
+            if (tool != null)
+                tool.SetReactionForce(_reactionForceFiltered);
         }
 
+        // ─────────────────────────────────────────────────────────────────────────
+        // 公開 API / Public API
+        // ─────────────────────────────────────────────────────────────────────────
+
         /// <summary>
-        /// 在指定世界座標位置施加接觸力，觸發對應的變形模型。
-        /// Applies contact force at the specified world position, triggering the active deformation model.
+        /// 在指定世界座標位置施加接觸力：
+        /// ① 物理層 → MassSpringDeformation.ApplyForceAtPosition()（速度衝量）
+        /// ② 視覺層 → SoftBodySimulator.ApplyContactDeformation()（表面凹陷計時）
+        ///
+        /// Applies contact force at the specified world position:
+        /// ① Physics layer → MassSpringDeformation.ApplyForceAtPosition() (velocity impulse)
+        /// ② Visual layer  → SoftBodySimulator.ApplyContactDeformation() (surface dimple timer)
         /// </summary>
-        /// <param name="worldPosition">接觸點（世界座標）Contact point (world space)</param>
-        /// <param name="forceVector">力向量（世界座標）Force vector (world space)</param>
-        /// <param name="influenceRadius">影響半徑 Influence radius</param>
         public void ApplyContactForce(Vector3 worldPosition, Vector3 forceVector, float influenceRadius = 0.01f)
         {
-            float forceMagnitude = forceVector.magnitude;
-
-            if (activeMode == DeformationMode.MassSpring || activeMode == DeformationMode.Combined)
-                _massSpring.ApplyForceAtPosition(worldPosition, forceVector, influenceRadius);
-
-            if (activeMode == DeformationMode.SoftBody || activeMode == DeformationMode.Combined)
-                _softBody.ApplyContactDeformation(worldPosition, forceMagnitude, influenceRadius);
-
+            _shapeMatching.ApplyForceAtPosition(worldPosition, forceVector, influenceRadius);
+            _softBody.ApplyContactDeformation(worldPosition, forceVector.magnitude, influenceRadius);
             HighlightDeformation(worldPosition, influenceRadius);
         }
 
         /// <summary>
-        /// 以視覺方式高亮顯示正在發生變形的區域。
-        /// Visually highlights the area undergoing deformation.
+        /// 設定外部接觸球體資訊（由 ToolController 每幀呼叫）。
+        /// Sets external contact sphere information (called every frame by ToolController).
         /// </summary>
-        private void HighlightDeformation(Vector3 worldPosition, float radius)
+        public void SetExternalContact(Vector3 worldPos, float radius, Vector3 worldVelocity)
         {
-            if (_renderer == null) return;
-            _renderer.GetPropertyBlock(_propertyBlock);
-            _propertyBlock.SetColor("_DeformHighlightColor", deformationHighlightColor);
-            _renderer.SetPropertyBlock(_propertyBlock);
+            _shapeMatching.externalPos      = worldPos;
+            _shapeMatching.externalRadius   = radius;
+            _shapeMatching.externalVelocity = worldVelocity;
         }
 
         /// <summary>
-        /// 設定病變標記位置與半徑，傳遞至 SoftBodySimulator 以調整局部硬度。
-        /// Sets lesion marker position and radius, forwarded to SoftBodySimulator to adjust local hardness.
+        /// 清除外部接觸（工具離開時呼叫）。
+        /// Clears external contact (call when tool leaves).
+        /// </summary>
+        public void ClearExternalContact()
+        {
+            _shapeMatching.externalRadius = 0f;
+        }
+
+        /// <summary>
+        /// 設定病變標記位置與半徑，傳遞至 SoftBodySimulator 以調整局部硬度查詢。
+        /// Sets lesion marker position and radius, forwarded to SoftBodySimulator for local hardness queries.
         /// </summary>
         public void SetLesionRegion(Vector3 localCenter, float radius)
         {
@@ -107,7 +126,7 @@ namespace TongueCancer.TissueDeformation
 
         /// <summary>
         /// 套用病變組織顏色至渲染器。
-        /// Applies lesion tissue color to the renderer.
+        /// Applies lesion tissue colour to the renderer.
         /// </summary>
         public void ApplyLesionVisualization(bool isLesion)
         {
@@ -123,14 +142,27 @@ namespace TongueCancer.TissueDeformation
         /// </summary>
         public void ResetAll()
         {
-            _massSpring.ResetDeformation();
+            _shapeMatching.ResetDeformation();
             _softBody.ResetDeformation();
+
             if (_renderer != null)
             {
                 _renderer.GetPropertyBlock(_propertyBlock);
                 _propertyBlock.SetColor("_BaseColor", normalTissueColor);
                 _renderer.SetPropertyBlock(_propertyBlock);
             }
+        }
+
+        // ─────────────────────────────────────────────────────────────────────────
+        // 視覺高亮 / Visual highlight
+        // ─────────────────────────────────────────────────────────────────────────
+
+        private void HighlightDeformation(Vector3 worldPosition, float radius)
+        {
+            if (_renderer == null) return;
+            _renderer.GetPropertyBlock(_propertyBlock);
+            _propertyBlock.SetColor("_DeformHighlightColor", deformationHighlightColor);
+            _renderer.SetPropertyBlock(_propertyBlock);
         }
     }
 }
