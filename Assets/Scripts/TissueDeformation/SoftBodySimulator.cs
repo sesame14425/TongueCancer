@@ -56,6 +56,7 @@ namespace TongueCancer.TissueDeformation
         private float[]   _displacementAmounts;
         private float[]   _reboundTimers;
         private bool      _visualLayerReady;
+        private int       _expectedVertexCount;
 
         private void Awake()
         {
@@ -75,6 +76,7 @@ namespace TongueCancer.TissueDeformation
                 _normalCache.Capacity = _originalVertices.Length;
                 _displacementAmounts = new float[_originalVertices.Length];
                 _reboundTimers       = new float[_originalVertices.Length];
+                _expectedVertexCount = _originalVertices.Length;
                 _visualLayerReady    = true;
             }
         }
@@ -106,13 +108,13 @@ namespace TongueCancer.TissueDeformation
                 _overlayMesh.GetNormals(_normalCache);
             }
 
-            if (_currentVertices == null)
-                _currentVertices = new List<Vector3>(_baseVertices.Count);
-            if (_currentVertices.Count != _baseVertices.Count)
+            if (_baseVertices.Count != _expectedVertexCount)
             {
+                _expectedVertexCount = _baseVertices.Count;
                 _currentVertices.Clear();
-                _currentVertices.Capacity = _baseVertices.Count;
-                for (int i = 0; i < _baseVertices.Count; i++)
+                if (_currentVertices.Capacity < _expectedVertexCount)
+                    _currentVertices.Capacity = _expectedVertexCount;
+                for (int i = 0; i < _expectedVertexCount; i++)
                     _currentVertices.Add(Vector3.zero);
             }
 
