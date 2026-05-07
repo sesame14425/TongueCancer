@@ -47,7 +47,7 @@ namespace TongueCancer.TissueDeformation
 
         // ── 視覺層內部狀態（與 Shape Matching 物理完全分離）
         // ── Visual-layer internal state (completely decoupled from Shape Matching physics)
-        private Mesh _overlayMesh;           // 視覺凹陷用的 Mesh（覆蓋 MassSpring 的結果）
+        private Mesh _overlayMesh;           // 視覺凹陷用的 Mesh（LateUpdate 會直接改寫此 Mesh）
         private MeshCollider _meshCollider;
         private Vector3[] _originalVertices;
         private List<Vector3> _currentVertices;
@@ -106,22 +106,30 @@ namespace TongueCancer.TissueDeformation
                 _overlayMesh.GetNormals(_normalCache);
             }
 
-            if (_currentVertices == null || _currentVertices.Count != _baseVertices.Count)
-            {
+            if (_currentVertices == null)
                 _currentVertices = new List<Vector3>(_baseVertices.Count);
+            if (_currentVertices.Count != _baseVertices.Count)
+            {
+                _currentVertices.Clear();
+                _currentVertices.Capacity = _baseVertices.Count;
                 for (int i = 0; i < _baseVertices.Count; i++)
                     _currentVertices.Add(Vector3.zero);
             }
 
+            bool hasDisplacement = false;
             for (int i = 0; i < _baseVertices.Count; i++)
             {
                 float displacement = GetVisualDisplacement(i);
+                if (displacement > 0f) hasDisplacement = true;
                 _currentVertices[i] = _baseVertices[i] - _normalCache[i] * displacement;
             }
 
             _overlayMesh.SetVertices(_currentVertices);
-            _overlayMesh.RecalculateNormals();
-            _overlayMesh.RecalculateBounds();
+            if (hasDisplacement)
+            {
+                _overlayMesh.RecalculateNormals();
+                _overlayMesh.RecalculateBounds();
+            }
         }
 
         // ─────────────────────────────────────────────────────────────────────────

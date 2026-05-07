@@ -86,6 +86,7 @@ public class ToolMover : MonoBehaviour
 
             if (!overlapped) break;
 
+            // Push slightly outward to keep a small clearance beyond the surface.
             Vector3 correction = dir * (dist + projectionSlop);
             logicPosition += correction;
             commandedPosition += correction;
