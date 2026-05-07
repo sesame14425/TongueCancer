@@ -823,9 +823,8 @@ namespace TongueCancer.TissueDeformation
         public void ApplyForceAtPosition(Vector3 worldPosition, Vector3 force, float radius = 0.01f)
         {
             if (CurrentPosition == null || _addedVelocityArray == null) return;
-            float forceMagnitude = force.magnitude;
-            if (maxContactForce > 0f && forceMagnitude > maxContactForce)
-                force = force / forceMagnitude * maxContactForce;
+            if (maxContactForce > 0f)
+                force = Vector3.ClampMagnitude(force, maxContactForce);
             Vector3 localPos   = transform.InverseTransformPoint(worldPosition);
             Vector3 localForce = transform.InverseTransformDirection(force);
             float   invMass    = (Mass > 0f) ? (1f / Mass) : 1f;

@@ -14,6 +14,7 @@ public class ToolMover : MonoBehaviour
     public float projectionSlop = 0.0005f;
     public float commandFollow = 18f;
 
+    private const float MinDeltaTime = 1e-6f;
     private Vector3 commandedPosition;
     private Vector3 logicPosition;
     private Vector3 lastLogicPosition;
@@ -34,7 +35,7 @@ public class ToolMover : MonoBehaviour
         ApplyLogicBackdrive();
         ResolvePenetrationProjection();
 
-        float dt = Mathf.Max(1e-6f, Time.deltaTime);
+        float dt = Mathf.Max(MinDeltaTime, Time.deltaTime);
         logicVelocity = (logicPosition - lastLogicPosition) / dt;
         lastLogicPosition = logicPosition;
 

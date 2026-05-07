@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace TongueCancer.TissueDeformation
@@ -49,7 +50,9 @@ namespace TongueCancer.TissueDeformation
         private Mesh _overlayMesh;           // 視覺凹陷用的 Mesh（覆蓋 MassSpring 的結果）
         private MeshCollider _meshCollider;
         private Vector3[] _originalVertices;
-        private Vector3[] _currentVertices;
+        private List<Vector3> _currentVertices;
+        private readonly List<Vector3> _baseVertices = new List<Vector3>();
+        private readonly List<Vector3> _normalCache = new List<Vector3>();
         private float[]   _displacementAmounts;
         private float[]   _reboundTimers;
         private bool      _visualLayerReady;
@@ -65,7 +68,11 @@ namespace TongueCancer.TissueDeformation
             {
                 _overlayMesh         = mf.mesh;
                 _originalVertices    = _overlayMesh.vertices;
-                _currentVertices     = (Vector3[])_originalVertices.Clone();
+                _currentVertices     = new List<Vector3>(_originalVertices.Length);
+                for (int i = 0; i < _originalVertices.Length; i++)
+                    _currentVertices.Add(_originalVertices[i]);
+                _baseVertices.Capacity = _originalVertices.Length;
+                _normalCache.Capacity = _originalVertices.Length;
                 _displacementAmounts = new float[_originalVertices.Length];
                 _reboundTimers       = new float[_originalVertices.Length];
                 _visualLayerReady    = true;
@@ -88,21 +95,28 @@ namespace TongueCancer.TissueDeformation
         {
             if (!_visualLayerReady || _overlayMesh == null) return;
 
-            Vector3[] baseVertices = _overlayMesh.vertices;
-            if (_currentVertices == null || _currentVertices.Length != baseVertices.Length)
-                _currentVertices = new Vector3[baseVertices.Length];
-
-            Vector3[] normals = _overlayMesh.normals;
-            if (normals == null || normals.Length != baseVertices.Length)
+            _baseVertices.Clear();
+            _overlayMesh.GetVertices(_baseVertices);
+            _normalCache.Clear();
+            _overlayMesh.GetNormals(_normalCache);
+            if (_normalCache.Count != _baseVertices.Count)
             {
                 _overlayMesh.RecalculateNormals();
-                normals = _overlayMesh.normals;
+                _normalCache.Clear();
+                _overlayMesh.GetNormals(_normalCache);
             }
 
-            for (int i = 0; i < baseVertices.Length; i++)
+            if (_currentVertices == null || _currentVertices.Count != _baseVertices.Count)
+            {
+                _currentVertices = new List<Vector3>(_baseVertices.Count);
+                for (int i = 0; i < _baseVertices.Count; i++)
+                    _currentVertices.Add(Vector3.zero);
+            }
+
+            for (int i = 0; i < _baseVertices.Count; i++)
             {
                 float displacement = GetVisualDisplacement(i);
-                _currentVertices[i] = baseVertices[i] - normals[i] * displacement;
+                _currentVertices[i] = _baseVertices[i] - _normalCache[i] * displacement;
             }
 
             _overlayMesh.SetVertices(_currentVertices);

@@ -98,9 +98,9 @@ namespace TongueCancer.TissueDeformation
         /// </summary>
         public void ApplyContactForce(Vector3 worldPosition, Vector3 forceVector, float influenceRadius = 0.01f)
         {
-            float penetration = forceVector.magnitude;
+            float forceMagnitude = forceVector.magnitude;
             float normalizedPressure = maxIndentDepth > 1e-6f
-                ? Mathf.Clamp01(penetration / maxIndentDepth)
+                ? Mathf.Clamp01(forceMagnitude / maxIndentDepth)
                 : 0f;
             float appliedForce = maxContactForce * normalizedPressure;
 
