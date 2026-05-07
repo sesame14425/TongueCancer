@@ -46,7 +46,7 @@ namespace TongueCancer.TissueDeformation
 
         // ── 視覺層內部狀態（與 Shape Matching 物理完全分離）
         // ── Visual-layer internal state (completely decoupled from Shape Matching physics)
-        private Mesh _overlayMesh;           // 僅供視覺凹陷用的獨立 Mesh 副本（若存在）
+        private Mesh _overlayMesh;           // 視覺凹陷用的 Mesh（覆蓋 MassSpring 的結果）
         private MeshCollider _meshCollider;
         private Vector3[] _originalVertices;
         private Vector3[] _currentVertices;
@@ -56,15 +56,15 @@ namespace TongueCancer.TissueDeformation
 
         private void Awake()
         {
-            // 視覺層使用 Mesh 的唯讀快照，不干涉 Shape Matching 對同一網格的操作
-            // The visual layer reads an initial snapshot; it does NOT drive the shared mesh
-            // (MassSpringDeformation owns the mesh).  We keep a position cache for queries only.
+            // 視覺層取得 Mesh 快照，用於計算凹陷並在 LateUpdate 套用位移。
+            // The visual layer takes a mesh snapshot for queries and applies offsets in LateUpdate.
             var mf = GetComponent<MeshFilter>();
             _meshCollider = GetComponent<MeshCollider>();
 
             if (mf != null && mf.sharedMesh != null)
             {
-                _originalVertices    = mf.sharedMesh.vertices;
+                _overlayMesh         = mf.mesh;
+                _originalVertices    = _overlayMesh.vertices;
                 _currentVertices     = (Vector3[])_originalVertices.Clone();
                 _displacementAmounts = new float[_originalVertices.Length];
                 _reboundTimers       = new float[_originalVertices.Length];
@@ -74,14 +74,40 @@ namespace TongueCancer.TissueDeformation
 
         private void Update()
         {
-            // 視覺回彈動畫：純計時，不寫入網格（網格由 MassSpringDeformation 管理）
-            // Visual rebound animation: timer-only, does NOT write to mesh (owned by MassSpringDeformation)
+            // 視覺回彈動畫：計時更新；網格寫入在 LateUpdate 執行
+            // Visual rebound animation: timer update only; mesh writes occur in LateUpdate.
             if (!_visualLayerReady) return;
             for (int i = 0; i < _reboundTimers.Length; i++)
             {
                 if (_reboundTimers[i] > 0f)
                     _reboundTimers[i] -= Time.deltaTime;
             }
+        }
+
+        private void LateUpdate()
+        {
+            if (!_visualLayerReady || _overlayMesh == null) return;
+
+            Vector3[] baseVertices = _overlayMesh.vertices;
+            if (_currentVertices == null || _currentVertices.Length != baseVertices.Length)
+                _currentVertices = new Vector3[baseVertices.Length];
+
+            Vector3[] normals = _overlayMesh.normals;
+            if (normals == null || normals.Length != baseVertices.Length)
+            {
+                _overlayMesh.RecalculateNormals();
+                normals = _overlayMesh.normals;
+            }
+
+            for (int i = 0; i < baseVertices.Length; i++)
+            {
+                float displacement = GetVisualDisplacement(i);
+                _currentVertices[i] = baseVertices[i] - normals[i] * displacement;
+            }
+
+            _overlayMesh.SetVertices(_currentVertices);
+            _overlayMesh.RecalculateNormals();
+            _overlayMesh.RecalculateBounds();
         }
 
         // ─────────────────────────────────────────────────────────────────────────
