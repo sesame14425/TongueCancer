@@ -33,6 +33,15 @@ namespace TongueCancer.TissueDeformation
         [Range(0f, 1f)]
         public float hapticSmoothing = 0.15f;
 
+        [Header("接觸力限制 / Contact Force Limits")]
+        [Tooltip("最大壓入深度（公尺）Max indentation depth (metres)")]
+        [Range(0.0001f, 0.05f)]
+        public float maxIndentDepth = 0.01f;
+
+        [Tooltip("最大接觸力（牛頓）Max contact force (Newtons)")]
+        [Range(0.01f, 50f)]
+        public float maxContactForce = 5f;
+
         // ── 子元件 / Sub-components ───────────────────────────────────────────────
         private MassSpringDeformation _shapeMatching;
         private SoftBodySimulator     _softBody;
@@ -89,8 +98,21 @@ namespace TongueCancer.TissueDeformation
         /// </summary>
         public void ApplyContactForce(Vector3 worldPosition, Vector3 forceVector, float influenceRadius = 0.01f)
         {
-            _shapeMatching.ApplyForceAtPosition(worldPosition, forceVector, influenceRadius);
-            _softBody.ApplyContactDeformation(worldPosition, forceVector.magnitude, influenceRadius);
+            float forceMagnitude = forceVector.magnitude;
+            float estimatedDepth = maxContactForce > 1e-6f
+                ? forceMagnitude * (maxIndentDepth / maxContactForce)
+                : 0f;
+            float normalizedPressure = maxIndentDepth > 1e-6f
+                ? Mathf.Clamp01(estimatedDepth / maxIndentDepth)
+                : 0f;
+            float appliedForce = maxContactForce * normalizedPressure;
+
+            Vector3 appliedVector = forceVector.sqrMagnitude > 1e-8f
+                ? forceVector.normalized * appliedForce
+                : Vector3.zero;
+
+            _shapeMatching.ApplyForceAtPosition(worldPosition, appliedVector, influenceRadius);
+            _softBody.ApplyContactDeformation(worldPosition, appliedForce, influenceRadius);
             HighlightDeformation(worldPosition, influenceRadius);
         }
 

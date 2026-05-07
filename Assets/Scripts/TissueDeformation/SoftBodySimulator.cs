@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace TongueCancer.TissueDeformation
@@ -46,41 +47,90 @@ namespace TongueCancer.TissueDeformation
 
         // ── 視覺層內部狀態（與 Shape Matching 物理完全分離）
         // ── Visual-layer internal state (completely decoupled from Shape Matching physics)
-        private Mesh _overlayMesh;           // 僅供視覺凹陷用的獨立 Mesh 副本（若存在）
+        private Mesh _overlayMesh;           // 視覺凹陷用的 Mesh（LateUpdate 會直接改寫此 Mesh）
         private MeshCollider _meshCollider;
         private Vector3[] _originalVertices;
-        private Vector3[] _currentVertices;
+        private List<Vector3> _currentVertices;
+        private readonly List<Vector3> _baseVertices = new List<Vector3>();
+        private readonly List<Vector3> _normalCache = new List<Vector3>();
         private float[]   _displacementAmounts;
         private float[]   _reboundTimers;
         private bool      _visualLayerReady;
+        private int       _expectedVertexCount;
 
         private void Awake()
         {
-            // 視覺層使用 Mesh 的唯讀快照，不干涉 Shape Matching 對同一網格的操作
-            // The visual layer reads an initial snapshot; it does NOT drive the shared mesh
-            // (MassSpringDeformation owns the mesh).  We keep a position cache for queries only.
+            // 視覺層取得 Mesh 快照，用於計算凹陷並在 LateUpdate 套用位移。
+            // The visual layer takes a mesh snapshot for queries and applies offsets in LateUpdate.
             var mf = GetComponent<MeshFilter>();
             _meshCollider = GetComponent<MeshCollider>();
 
             if (mf != null && mf.sharedMesh != null)
             {
-                _originalVertices    = mf.sharedMesh.vertices;
-                _currentVertices     = (Vector3[])_originalVertices.Clone();
+                _overlayMesh         = mf.mesh;
+                _originalVertices    = _overlayMesh.vertices;
+                _currentVertices     = new List<Vector3>(_originalVertices.Length);
+                for (int i = 0; i < _originalVertices.Length; i++)
+                    _currentVertices.Add(_originalVertices[i]);
+                _baseVertices.Capacity = _originalVertices.Length;
+                _normalCache.Capacity = _originalVertices.Length;
                 _displacementAmounts = new float[_originalVertices.Length];
                 _reboundTimers       = new float[_originalVertices.Length];
+                _expectedVertexCount = _originalVertices.Length;
                 _visualLayerReady    = true;
             }
         }
 
         private void Update()
         {
-            // 視覺回彈動畫：純計時，不寫入網格（網格由 MassSpringDeformation 管理）
-            // Visual rebound animation: timer-only, does NOT write to mesh (owned by MassSpringDeformation)
+            // 視覺回彈動畫：計時更新；網格寫入在 LateUpdate 執行
+            // Visual rebound animation: timer update only; mesh writes occur in LateUpdate.
             if (!_visualLayerReady) return;
             for (int i = 0; i < _reboundTimers.Length; i++)
             {
                 if (_reboundTimers[i] > 0f)
                     _reboundTimers[i] -= Time.deltaTime;
+            }
+        }
+
+        private void LateUpdate()
+        {
+            if (!_visualLayerReady || _overlayMesh == null) return;
+
+            _baseVertices.Clear();
+            _overlayMesh.GetVertices(_baseVertices);
+            _normalCache.Clear();
+            _overlayMesh.GetNormals(_normalCache);
+            if (_normalCache.Count != _baseVertices.Count)
+            {
+                _overlayMesh.RecalculateNormals();
+                _normalCache.Clear();
+                _overlayMesh.GetNormals(_normalCache);
+            }
+
+            if (_baseVertices.Count != _expectedVertexCount)
+            {
+                _expectedVertexCount = _baseVertices.Count;
+                _currentVertices.Clear();
+                if (_currentVertices.Capacity < _expectedVertexCount)
+                    _currentVertices.Capacity = _expectedVertexCount;
+                for (int i = 0; i < _expectedVertexCount; i++)
+                    _currentVertices.Add(Vector3.zero);
+            }
+
+            bool hasDisplacement = false;
+            for (int i = 0; i < _baseVertices.Count; i++)
+            {
+                float displacement = GetVisualDisplacement(i);
+                if (displacement > 0f) hasDisplacement = true;
+                _currentVertices[i] = _baseVertices[i] - _normalCache[i] * displacement;
+            }
+
+            _overlayMesh.SetVertices(_currentVertices);
+            if (hasDisplacement)
+            {
+                _overlayMesh.RecalculateNormals();
+                _overlayMesh.RecalculateBounds();
             }
         }
 

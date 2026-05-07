@@ -60,6 +60,8 @@ namespace TongueCancer.TissueDeformation
         [Range(1f, 6f)] public float contactFalloffPower = 2f;
         public float contactDecaySpeed = 3f;
         public float minPenetration = 0.0002f;
+        [Tooltip("最大接觸力（牛頓）/ Max contact force (Newtons)")]
+        public float maxContactForce = 10f;
 
         [Header("穩定控制 / Stability")]
         public float maxDvPerStep = 0.2f;
@@ -821,6 +823,8 @@ namespace TongueCancer.TissueDeformation
         public void ApplyForceAtPosition(Vector3 worldPosition, Vector3 force, float radius = 0.01f)
         {
             if (CurrentPosition == null || _addedVelocityArray == null) return;
+            if (maxContactForce > 0f)
+                force = Vector3.ClampMagnitude(force, maxContactForce);
             Vector3 localPos   = transform.InverseTransformPoint(worldPosition);
             Vector3 localForce = transform.InverseTransformDirection(force);
             float   invMass    = (Mass > 0f) ? (1f / Mass) : 1f;
