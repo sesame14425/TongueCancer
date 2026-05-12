@@ -38,11 +38,27 @@ namespace TongueCancer.Tools
 
         protected TissueDeformationController CurrentTarget { get; private set; }
         protected bool IsContacting { get; private set; }
+        protected Vector3 CurrentVelocity => _currentVelocity;
+
+        private Vector3 _lastPosition;
+        private Vector3 _currentVelocity;
+
+        protected virtual void OnEnable()
+        {
+            _lastPosition = transform.position;
+            _currentVelocity = Vector3.zero;
+        }
 
         protected virtual void Update()
         {
             if (!isActive) return;
+
+            float dt = Mathf.Max(1e-6f, Time.deltaTime);
+            _currentVelocity = (transform.position - _lastPosition) / dt;
+
             DetectContact();
+
+            _lastPosition = transform.position;
         }
 
         /// <summary>
@@ -51,9 +67,8 @@ namespace TongueCancer.Tools
         /// </summary>
         protected virtual void DetectContact()
         {
-            if (contactPoint == null) return;
-
-            Collider[] hits = Physics.OverlapSphere(contactPoint.position, contactRadius);
+            Vector3 detectionCenter = contactPoint != null ? contactPoint.position : transform.position;
+            Collider[] hits = Physics.OverlapSphere(detectionCenter, contactRadius);
             TissueDeformationController target = null;
 
             foreach (Collider hit in hits)
@@ -66,11 +81,14 @@ namespace TongueCancer.Tools
             {
                 IsContacting = true;
                 CurrentTarget = target;
+                UpdateExternalContact(target, detectionCenter);
                 OnContact(target);
             }
             else if (IsContacting)
             {
                 IsContacting = false;
+                if (CurrentTarget != null)
+                    CurrentTarget.ClearExternalContact();
                 OnContactEnd(CurrentTarget);
                 CurrentTarget = null;
             }
@@ -82,7 +100,8 @@ namespace TongueCancer.Tools
         /// </summary>
         protected virtual void OnContact(TissueDeformationController tissue)
         {
-            OnTissueContact?.Invoke(contactPoint.position, tissue);
+            Vector3 contactPos = contactPoint != null ? contactPoint.position : transform.position;
+            OnTissueContact?.Invoke(contactPos, tissue);
         }
 
         /// <summary>
@@ -113,11 +132,26 @@ namespace TongueCancer.Tools
             OnToolDeactivated?.Invoke();
         }
 
+        private void UpdateExternalContact(TissueDeformationController tissue, Vector3 contactPos)
+        {
+            if (tissue == null) return;
+            tissue.SetExternalContact(contactPos, GetToolRadius(), _currentVelocity);
+        }
+
+        private float GetToolRadius()
+        {
+            SphereCollider sphere = GetComponent<SphereCollider>();
+            if (sphere == null) return contactRadius;
+
+            Vector3 s = sphere.transform.lossyScale;
+            return sphere.radius * Mathf.Max(s.x, Mathf.Max(s.y, s.z));
+        }
+
         private void OnDrawGizmosSelected()
         {
-            if (contactPoint == null) return;
+            Vector3 center = contactPoint != null ? contactPoint.position : transform.position;
             Gizmos.color = isActive ? Color.red : Color.yellow;
-            Gizmos.DrawWireSphere(contactPoint.position, contactRadius);
+            Gizmos.DrawWireSphere(center, contactRadius);
         }
     }
 }
